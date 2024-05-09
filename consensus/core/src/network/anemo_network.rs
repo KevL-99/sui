@@ -351,15 +351,17 @@ impl<S: NetworkService> ConsensusRpc for AnemoServiceProxy<S> {
 /// 5. Install `AnemoService` to `AnemoManager` with `AnemoManager::install_service()`.
 pub(crate) struct AnemoManager {
     context: Arc<Context>,
+    network_keypair: NetworkKeyPair,
     client: Arc<AnemoClient>,
     network: Arc<ArcSwapOption<anemo::Network>>,
     connection_monitor_handle: Option<ConnectionMonitorHandle>,
 }
 
 impl AnemoManager {
-    pub(crate) fn new(context: Arc<Context>) -> Self {
+    pub(crate) fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self {
         Self {
             context: context.clone(),
+            network_keypair,
             client: Arc::new(AnemoClient::new(context)),
             network: Arc::new(ArcSwapOption::default()),
             connection_monitor_handle: None,
@@ -370,15 +372,15 @@ impl AnemoManager {
 impl<S: NetworkService> NetworkManager<S> for AnemoManager {
     type Client = AnemoClient;
 
-    fn new(context: Arc<Context>) -> Self {
-        AnemoManager::new(context)
+    fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self {
+        AnemoManager::new(context, network_keypair)
     }
 
     fn client(&self) -> Arc<Self::Client> {
         self.client.clone()
     }
 
-    async fn install_service(&mut self, network_keypair: NetworkKeyPair, service: Arc<S>) {
+    async fn install_service(&mut self, service: Arc<S>) {
         self.context
             .metrics
             .network_metrics
@@ -489,7 +491,7 @@ impl<S: NetworkService> NetworkManager<S> for AnemoManager {
         let addr = own_address
             .to_anemo_address()
             .unwrap_or_else(|op| panic!("{op}: {own_address}"));
-        let private_key_bytes = network_keypair.private_key_bytes();
+        let private_key_bytes = self.network_keypair.clone().private_key_bytes();
         let network = loop {
             let network_result = anemo::Network::bind(addr.clone())
                 .server_name("consensus")
@@ -744,24 +746,20 @@ mod test {
                 .clone()
                 .with_authority_index(context.committee.to_authority_index(0).unwrap()),
         );
-        let mut manager_0 = AnemoManager::new(context_0.clone());
+        let mut manager_0 = AnemoManager::new(context_0.clone(), keys[0].0.clone());
         let client_0 = <AnemoManager as NetworkManager<Mutex<TestService>>>::client(&manager_0);
         let service_0 = Arc::new(Mutex::new(TestService::new()));
-        manager_0
-            .install_service(keys[0].0.clone(), service_0.clone())
-            .await;
+        manager_0.install_service(service_0.clone()).await;
 
         let context_1 = Arc::new(
             context
                 .clone()
                 .with_authority_index(context.committee.to_authority_index(1).unwrap()),
         );
-        let mut manager_1 = AnemoManager::new(context_1.clone());
+        let mut manager_1 = AnemoManager::new(context_1.clone(), keys[1].0.clone());
         let client_1 = <AnemoManager as NetworkManager<Mutex<TestService>>>::client(&manager_1);
         let service_1 = Arc::new(Mutex::new(TestService::new()));
-        manager_1
-            .install_service(keys[1].0.clone(), service_1.clone())
-            .await;
+        manager_1.install_service(service_1.clone()).await;
 
         // Wait for anemo to initialize.
         sleep(Duration::from_secs(5)).await;
@@ -807,12 +805,10 @@ mod test {
                 .clone()
                 .with_authority_index(context_4.committee.to_authority_index(4).unwrap()),
         );
-        let mut manager_4 = AnemoManager::new(context_4.clone());
+        let mut manager_4 = AnemoManager::new(context_4.clone(), keys_4[4].0.clone());
         let client_4 = <AnemoManager as NetworkManager<Mutex<TestService>>>::client(&manager_4);
         let service_4 = Arc::new(Mutex::new(TestService::new()));
-        manager_4
-            .install_service(keys_4[4].0.clone(), service_4.clone())
-            .await;
+        manager_4.install_service(service_4.clone()).await;
 
         // client_4 should not be able to reach service_0 or service_1, because of the
         // AllowedPeers filter.

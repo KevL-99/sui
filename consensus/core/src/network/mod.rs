@@ -148,13 +148,13 @@ where
     type Client: NetworkClient;
 
     /// Creates a new network manager.
-    fn new(context: Arc<Context>) -> Self;
+    fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self;
 
     /// Returns the network client.
     fn client(&self) -> Arc<Self::Client>;
 
     /// Installs network service.
-    async fn install_service(&mut self, network_keypair: NetworkKeyPair, service: Arc<S>);
+    async fn install_service(&mut self, service: Arc<S>);
 
     /// Stops the network service.
     async fn stop(&mut self);

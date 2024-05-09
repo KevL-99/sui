@@ -476,15 +476,17 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
 /// 5. Install `TonicService` to `TonicManager` with `TonicManager::install_service()`.
 pub(crate) struct TonicManager {
     context: Arc<Context>,
+    network_keypair: NetworkKeyPair,
     client: Arc<TonicClient>,
     server: JoinSet<()>,
     shutdown: Option<Sender<()>>,
 }
 
 impl TonicManager {
-    pub(crate) fn new(context: Arc<Context>) -> Self {
+    pub(crate) fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self {
         Self {
             context: context.clone(),
+            network_keypair,
             client: Arc::new(TonicClient::new(context)),
             server: JoinSet::new(),
             shutdown: None,
@@ -495,15 +497,15 @@ impl TonicManager {
 impl<S: NetworkService> NetworkManager<S> for TonicManager {
     type Client = TonicClient;
 
-    fn new(context: Arc<Context>) -> Self {
-        TonicManager::new(context)
+    fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self {
+        TonicManager::new(context, network_keypair)
     }
 
     fn client(&self) -> Arc<Self::Client> {
         self.client.clone()
     }
 
-    async fn install_service(&mut self, _network_keypair: NetworkKeyPair, service: Arc<S>) {
+    async fn install_service(&mut self, service: Arc<S>) {
         self.context
             .metrics
             .network_metrics
@@ -744,24 +746,20 @@ mod test {
                 .clone()
                 .with_authority_index(context.committee.to_authority_index(0).unwrap()),
         );
-        let mut manager_0 = TonicManager::new(context_0.clone());
+        let mut manager_0 = TonicManager::new(context_0.clone(), keys[0].0.clone());
         let client_0 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_0);
         let service_0 = service_with_own_blocks();
-        manager_0
-            .install_service(keys[0].0.clone(), service_0.clone())
-            .await;
+        manager_0.install_service(service_0.clone()).await;
 
         let context_1 = Arc::new(
             context
                 .clone()
                 .with_authority_index(context.committee.to_authority_index(1).unwrap()),
         );
-        let mut manager_1 = TonicManager::new(context_1.clone());
+        let mut manager_1 = TonicManager::new(context_1.clone(), keys[1].0.clone());
         let client_1 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_1);
         let service_1 = service_with_own_blocks();
-        manager_1
-            .install_service(keys[1].0.clone(), service_1.clone())
-            .await;
+        manager_1.install_service(service_1.clone()).await;
 
         // Test that servers can receive client RPCs.
         // If the test uses simulated time, more retries will be necessary to make sure
@@ -808,24 +806,20 @@ mod test {
                 .clone()
                 .with_authority_index(context.committee.to_authority_index(0).unwrap()),
         );
-        let mut manager_0 = TonicManager::new(context_0.clone());
+        let mut manager_0 = TonicManager::new(context_0.clone(), keys[0].0.clone());
         let client_0 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_0);
         let service_0 = service_with_own_blocks();
-        manager_0
-            .install_service(keys[0].0.clone(), service_0.clone())
-            .await;
+        manager_0.install_service(service_0.clone()).await;
 
         let context_1 = Arc::new(
             context
                 .clone()
                 .with_authority_index(context.committee.to_authority_index(1).unwrap()),
         );
-        let mut manager_1 = TonicManager::new(context_1.clone());
+        let mut manager_1 = TonicManager::new(context_1.clone(), keys[1].0.clone());
         let client_1 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_1);
         let service_1 = service_with_own_blocks();
-        manager_1
-            .install_service(keys[1].0.clone(), service_1.clone())
-            .await;
+        manager_1.install_service(service_1.clone()).await;
 
         let client_0_round = 50;
         let receive_stream_0 = client_0
