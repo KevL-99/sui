@@ -31,11 +31,12 @@ use crate::{
     CommitIndex, Round,
 };
 
-// Anemo generated stubs for RPCs.
+// Anemo generated RPC stubs.
 mod anemo_gen {
     include!(concat!(env!("OUT_DIR"), "/consensus.ConsensusRpc.rs"));
 }
 
+// Tonic generated RPC stubs.
 mod tonic_gen {
     include!(concat!(env!("OUT_DIR"), "/consensus.ConsensusService.rs"));
 }
@@ -44,6 +45,8 @@ pub(crate) mod anemo_network;
 pub(crate) mod connection_monitor;
 pub(crate) mod epoch_filter;
 pub(crate) mod metrics;
+#[cfg(test)]
+mod network_tests;
 #[cfg(test)]
 pub(crate) mod test_network;
 pub(crate) mod tonic_network;
@@ -58,7 +61,7 @@ pub(crate) type BlockStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
 /// But it is up to the server implementation if the timeout is honored.
 /// - To bound server resources, server should implement own timeout for incoming requests.
 #[async_trait]
-pub(crate) trait NetworkClient: Send + Sync + 'static {
+pub(crate) trait NetworkClient: Send + Sync + Sized + 'static {
     // Whether the network client streams blocks to subscribed peers.
     const SUPPORT_STREAMING: bool;
 

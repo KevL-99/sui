@@ -643,7 +643,7 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
 
                     trace!("Connection ready. Starting to serve requests for {peer_addr:?}");
                     http.serve_connection(tls_stream, svc).await.map_err(|e| {
-                        let msg = format!("Server: error serving {peer_addr:?}: {e:?}");
+                        let msg = format!("Error serving {peer_addr:?}: {e:?}");
                         trace!(msg);
                         ConsensusError::NetworkServerConnection(msg)
                     })
@@ -651,7 +651,7 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
             }
         });
 
-        info!("Tonic server started at: {own_address}");
+        info!("Server started at: {own_address}");
     }
 
     async fn stop(&mut self) {
@@ -822,157 +822,4 @@ fn chunk_blocks(blocks: Vec<Bytes>, chunk_limit: usize) -> Vec<Vec<Bytes>> {
         chunks.push(chunk);
     }
     chunks
-}
-
-// TODO: after supporting peer authentication, using rtest to share the test case with anemo_network.rs
-#[cfg(test)]
-mod test {
-    use std::{sync::Arc, time::Duration};
-
-    use bytes::Bytes;
-    use futures::StreamExt;
-    use parking_lot::Mutex;
-
-    use crate::{
-        block::{TestBlock, VerifiedBlock},
-        context::Context,
-        network::{
-            test_network::TestService, tonic_network::TonicManager, NetworkClient as _,
-            NetworkManager,
-        },
-        Round,
-    };
-
-    fn block_for_round(round: Round) -> Bytes {
-        Bytes::from(vec![round as u8; 16])
-    }
-
-    fn service_with_own_blocks() -> Arc<Mutex<TestService>> {
-        let service = Arc::new(Mutex::new(TestService::new()));
-        {
-            let mut service = service.lock();
-            let own_blocks = (0..=100u8)
-                .map(|i| block_for_round(i as Round))
-                .collect::<Vec<_>>();
-            service.add_own_blocks(own_blocks);
-        }
-        service
-    }
-
-    #[tokio::test]
-    async fn tonic_send_block() {
-        let (context, keys) = Context::new_for_test(4);
-
-        let context_0 = Arc::new(
-            context
-                .clone()
-                .with_authority_index(context.committee.to_authority_index(0).unwrap()),
-        );
-        let mut manager_0 = TonicManager::new(context_0.clone(), keys[0].0.clone());
-        let client_0 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_0);
-        let service_0 = service_with_own_blocks();
-        manager_0.install_service(service_0.clone()).await;
-
-        let context_1 = Arc::new(
-            context
-                .clone()
-                .with_authority_index(context.committee.to_authority_index(1).unwrap()),
-        );
-        let mut manager_1 = TonicManager::new(context_1.clone(), keys[1].0.clone());
-        let client_1 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_1);
-        let service_1 = service_with_own_blocks();
-        manager_1.install_service(service_1.clone()).await;
-
-        // Test that servers can receive client RPCs.
-        // If the test uses simulated time, more retries will be necessary to make sure
-        // the server is ready.
-        let test_block_0 = VerifiedBlock::new_for_test(TestBlock::new(9, 0).build());
-        client_0
-            .send_block(
-                context.committee.to_authority_index(1).unwrap(),
-                &test_block_0,
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        let test_block_1 = VerifiedBlock::new_for_test(TestBlock::new(9, 1).build());
-        client_1
-            .send_block(
-                context.committee.to_authority_index(0).unwrap(),
-                &test_block_1,
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(service_0.lock().handle_send_block.len(), 1);
-        assert_eq!(service_0.lock().handle_send_block[0].0.value(), 1);
-        assert_eq!(
-            service_0.lock().handle_send_block[0].1,
-            test_block_1.serialized(),
-        );
-        assert_eq!(service_1.lock().handle_send_block.len(), 1);
-        assert_eq!(service_1.lock().handle_send_block[0].0.value(), 0);
-        assert_eq!(
-            service_1.lock().handle_send_block[0].1,
-            test_block_0.serialized(),
-        );
-    }
-
-    #[tokio::test]
-    async fn tonic_subscribe_blocks() {
-        let (context, keys) = Context::new_for_test(4);
-
-        let context_0 = Arc::new(
-            context
-                .clone()
-                .with_authority_index(context.committee.to_authority_index(0).unwrap()),
-        );
-        let mut manager_0 = TonicManager::new(context_0.clone(), keys[0].0.clone());
-        let client_0 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_0);
-        let service_0 = service_with_own_blocks();
-        manager_0.install_service(service_0.clone()).await;
-
-        let context_1 = Arc::new(
-            context
-                .clone()
-                .with_authority_index(context.committee.to_authority_index(1).unwrap()),
-        );
-        let mut manager_1 = TonicManager::new(context_1.clone(), keys[1].0.clone());
-        let client_1 = <TonicManager as NetworkManager<Mutex<TestService>>>::client(&manager_1);
-        let service_1 = service_with_own_blocks();
-        manager_1.install_service(service_1.clone()).await;
-
-        let client_0_round = 50;
-        let receive_stream_0 = client_0
-            .subscribe_blocks(
-                context_0.committee.to_authority_index(1).unwrap(),
-                client_0_round,
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-
-        let count = receive_stream_0
-            .enumerate()
-            .then(|(i, item)| async move {
-                assert_eq!(item, block_for_round(client_0_round + i as Round + 1));
-                1
-            })
-            .fold(0, |a, b| async move { a + b })
-            .await;
-        // Round 51 to 100 blocks should have been received.
-        assert_eq!(count, 50);
-
-        let client_1_round = 100;
-        let mut receive_stream_1 = client_1
-            .subscribe_blocks(
-                context_1.committee.to_authority_index(0).unwrap(),
-                client_1_round,
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        assert!(receive_stream_1.next().await.is_none());
-    }
 }
