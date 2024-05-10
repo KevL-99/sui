@@ -50,7 +50,8 @@ pub(crate) fn create_rustls_client_config(
         sui_tls::ServerCertVerifier::new(target_public_key, certificate_server_name(context))
             .rustls_client_config(vec![tls_cert], tls_private_key)
             .unwrap_or_else(|e| panic!("Failed to create TLS client config: {:?}", e));
-    tls_config.alpn_protocols = vec![b"h2".to_vec()];
+    // alpn cannot be predefined. It will be set by hyper-rustls.
+    tls_config.alpn_protocols = vec![];
     tls_config
 }
 

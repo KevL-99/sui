@@ -36,6 +36,7 @@ use super::{
         consensus_service_client::ConsensusServiceClient,
         consensus_service_server::ConsensusService,
     },
+    tonic_tls::create_rustls_client_config,
     BlockStream, NetworkClient, NetworkManager, NetworkService,
 };
 use crate::{
@@ -59,13 +60,15 @@ const MAX_TOTAL_FETCHED_BYTES: usize = 128 * 1024 * 1024;
 // Implements Tonic RPC client for Consensus.
 pub(crate) struct TonicClient {
     context: Arc<Context>,
+    network_keypair: NetworkKeyPair,
     channel_pool: Arc<ChannelPool>,
 }
 
 impl TonicClient {
-    pub(crate) fn new(context: Arc<Context>) -> Self {
+    pub(crate) fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self {
         Self {
             context: context.clone(),
+            network_keypair,
             channel_pool: Arc::new(ChannelPool::new(context)),
         }
     }
@@ -76,7 +79,10 @@ impl TonicClient {
         timeout: Duration,
     ) -> ConsensusResult<ConsensusServiceClient<Channel>> {
         let config = &self.context.parameters.tonic;
-        let channel = self.channel_pool.get_channel(peer, timeout).await?;
+        let channel = self
+            .channel_pool
+            .get_channel(self.network_keypair.clone(), peer, timeout)
+            .await?;
         Ok(ConsensusServiceClient::new(channel)
             .max_encoding_message_size(config.message_size_limit)
             .max_decoding_message_size(config.message_size_limit))
@@ -247,6 +253,7 @@ impl ChannelPool {
 
     async fn get_channel(
         &self,
+        network_keypair: NetworkKeyPair,
         peer: AuthorityIndex,
         timeout: Duration,
     ) -> ConsensusResult<Channel> {
@@ -275,11 +282,20 @@ impl ChannelPool {
             // tcp keepalive is probably unnecessary and is unsupported by msim.
             .user_agent("mysticeti")
             .unwrap();
-        // TODO: tune endpoint options and set TLS config.
+
+        let client_tls_config = create_rustls_client_config(&self.context, network_keypair, peer);
+        let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(client_tls_config)
+            .https_only()
+            .enable_http2()
+            .build();
 
         let deadline = tokio::time::Instant::now() + timeout;
         let channel = loop {
-            match endpoint.connect().await {
+            match endpoint
+                .connect_with_connector(https_connector.clone())
+                .await
+            {
                 Ok(channel) => break channel,
                 Err(e) => {
                     warn!("Timed out connecting to endpoint at {address}: {e:?}");
@@ -465,8 +481,8 @@ impl TonicManager {
     pub(crate) fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self {
         Self {
             context: context.clone(),
-            network_keypair,
-            client: Arc::new(TonicClient::new(context)),
+            network_keypair: network_keypair.clone(),
+            client: Arc::new(TonicClient::new(context, network_keypair)),
             server: JoinSet::new(),
             shutdown: None,
         }
