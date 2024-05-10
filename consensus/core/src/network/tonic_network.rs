@@ -29,7 +29,7 @@ use tonic::{
     Request, Response, Streaming,
 };
 use tower_http::ServiceBuilderExt;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use super::{
     tonic_gen::{
@@ -292,6 +292,7 @@ impl ChannelPool {
 
         let deadline = tokio::time::Instant::now() + timeout;
         let channel = loop {
+            trace!("Connecting to endpoint at {address}");
             match endpoint
                 .connect_with_connector(https_connector.clone())
                 .await
@@ -308,6 +309,7 @@ impl ChannelPool {
                 }
             }
         };
+        trace!("Connected to {address}");
 
         let mut channels = self.channels.write();
         // There should not be many concurrent attempts at connecting to the same peer.
@@ -557,7 +559,7 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
             let mut connection_handlers = JoinSet::new();
 
             loop {
-                let (conn, _addr) = tokio::select! {
+                let (tcp_stream, peer_addr) = tokio::select! {
                     result = listener.accept() => {
                         match result {
                             // This is the only branch that has addition processing.
@@ -587,6 +589,7 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
                         break;
                     },
                 };
+                trace!("Received TCP connection attempt from {peer_addr}");
 
                 let tls_acceptor = tls_acceptor.clone();
                 let consensus_service = consensus_service.clone();
@@ -594,35 +597,36 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
                 let connections_info = connections_info.clone();
 
                 connection_handlers.spawn(async move {
-                    let mut certificates = Vec::new();
+                    let tls_stream = tls_acceptor.accept(tcp_stream).await.map_err(|e| {
+                        let msg = format!("Error accepting TLS connection: {e:?}");
+                        trace!(msg);
+                        ConsensusError::NetworkError(msg)
+                    })?;
+                    trace!("Accepted TLS connection");
 
-                    let conn = tls_acceptor
-                        .accept_with(conn, |info| {
-                            if let Some(certs) = info.peer_certificates() {
-                                certificates.extend(certs.to_owned());
+                    let certificate_public_key =
+                        if let Some(certs) = tls_stream.get_ref().1.peer_certificates() {
+                            if certs.len() != 1 {
+                                let msg = format!(
+                                    "Unexpected number of certificates from TLS stream: {}",
+                                    certs.len()
+                                );
+                                trace!(msg);
+                                return Err(ConsensusError::NetworkError(msg));
                             }
-                        })
-                        .await
-                        .map_err(|e| {
-                            ConsensusError::NetworkError(format!(
-                                "Error accepting connection: {e:?}"
-                            ))
-                        })?;
-
-                    if certificates.len() != 1 {
-                        return Err(ConsensusError::NetworkError(format!(
-                            "Unexpected number of certificates: {}",
-                            certificates.len()
-                        )));
-                    }
-                    let certificate = certificates.pop().unwrap();
-                    let client_public_key = sui_tls::public_key_from_certificate(&certificate)
-                        .map_err(|e| {
-                            ConsensusError::NetworkError(format!(
-                                "Failed to extract public key from certificate: {e:?}"
-                            ))
-                        })?;
-                    let client_public_key = NetworkPublicKey::new(client_public_key);
+                            trace!("Received {} certificates", certs.len());
+                            sui_tls::public_key_from_certificate(&certs[0]).map_err(|e| {
+                                trace!("Failed to extract public key from certificate: {e:?}");
+                                ConsensusError::NetworkError(format!(
+                                    "Failed to extract public key from certificate: {e:?}"
+                                ))
+                            })?
+                        } else {
+                            return Err(ConsensusError::NetworkError(
+                                "No certificate found in TLS stream".to_string(),
+                            ));
+                        };
+                    let client_public_key = NetworkPublicKey::new(certificate_public_key);
                     let Some(authority_index) =
                         connections_info.authority_index(&client_public_key)
                     else {
@@ -633,11 +637,16 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
                         return Err(ConsensusError::NetworkError(msg));
                     };
                     let svc = tower::ServiceBuilder::new()
-                        .add_extension(Arc::new(PeerInfo { authority_index }))
+                        // NOTE: the PeerInfo extension is copied to every request served.
+                        // If PeerInfo ever starts to contain complex values, it should be wrapped with an Arc.
+                        .add_extension(PeerInfo { authority_index })
                         .service(consensus_service.clone());
 
-                    http.serve_connection(conn, svc).await.map_err(|e| {
-                        ConsensusError::NetworkError(format!("Error serving connection: {e:?}"))
+                    trace!("Connection ready. Starting to serve requests for {peer_addr:?}");
+                    http.serve_connection(tls_stream, svc).await.map_err(|e| {
+                        let msg = format!("Server: error serving {peer_addr:?}: {e:?}");
+                        trace!(msg);
+                        ConsensusError::NetworkError(msg)
                     })
                 });
             }
@@ -733,7 +742,7 @@ impl ConnectionsInfo {
 }
 
 /// Information about the client peer, set per connection.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct PeerInfo {
     authority_index: AuthorityIndex,
 }
