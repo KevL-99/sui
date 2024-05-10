@@ -89,7 +89,9 @@ impl AnemoClient {
         }
 
         let (mut subscriber, _) = network.subscribe().map_err(|e| {
-            ConsensusError::NetworkError(format!("Cannot subscribe to AnemoNetwork updates: {e:?}"))
+            ConsensusError::NetworkClientConnection(format!(
+                "Cannot subscribe to AnemoNetwork updates: {e:?}"
+            ))
         })?;
 
         let sleep = tokio::time::sleep(timeout);
@@ -140,7 +142,7 @@ impl NetworkClient for AnemoClient {
         client
             .send_block(anemo::Request::new(request).with_timeout(timeout))
             .await
-            .map_err(|e| ConsensusError::NetworkError(format!("send_block failed: {e:?}")))?;
+            .map_err(|e| ConsensusError::NetworkRequest(format!("send_block failed: {e:?}")))?;
         Ok(())
     }
 
@@ -181,7 +183,7 @@ impl NetworkClient for AnemoClient {
                 if e.status() == StatusCode::RequestTimeout {
                     ConsensusError::NetworkRequestTimeout(format!("fetch_blocks timeout: {e:?}"))
                 } else {
-                    ConsensusError::NetworkError(format!("fetch_blocks failed: {e:?}"))
+                    ConsensusError::NetworkRequest(format!("fetch_blocks failed: {e:?}"))
                 }
             })?;
         let body = response.into_body();
@@ -200,7 +202,7 @@ impl NetworkClient for AnemoClient {
         let response = client
             .fetch_commits(anemo::Request::new(request).with_timeout(timeout))
             .await
-            .map_err(|e| ConsensusError::NetworkError(format!("fetch_blocks failed: {e:?}")))?;
+            .map_err(|e| ConsensusError::NetworkRequest(format!("fetch_blocks failed: {e:?}")))?;
         let response = response.into_body();
         Ok((response.commits, response.certifier_blocks))
     }

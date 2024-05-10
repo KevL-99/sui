@@ -107,7 +107,7 @@ impl NetworkClient for TonicClient {
         client
             .send_block(request)
             .await
-            .map_err(|e| ConsensusError::NetworkError(format!("send_block failed: {e:?}")))?;
+            .map_err(|e| ConsensusError::NetworkRequest(format!("send_block failed: {e:?}")))?;
         Ok(())
     }
 
@@ -124,10 +124,9 @@ impl NetworkClient for TonicClient {
                 last_received_round: last_received,
             }
         }));
-        let response = client
-            .subscribe_blocks(request)
-            .await
-            .map_err(|e| ConsensusError::NetworkError(format!("subscribe_blocks failed: {e:?}")))?;
+        let response = client.subscribe_blocks(request).await.map_err(|e| {
+            ConsensusError::NetworkRequest(format!("subscribe_blocks failed: {e:?}"))
+        })?;
         let stream = response
             .into_inner()
             .filter_map(move |b| async move {
@@ -172,7 +171,7 @@ impl NetworkClient for TonicClient {
                 if e.code() == tonic::Code::DeadlineExceeded {
                     ConsensusError::NetworkRequestTimeout(format!("fetch_blocks failed: {e:?}"))
                 } else {
-                    ConsensusError::NetworkError(format!("fetch_blocks failed: {e:?}"))
+                    ConsensusError::NetworkRequest(format!("fetch_blocks failed: {e:?}"))
                 }
             })?
             .into_inner();
@@ -203,7 +202,7 @@ impl NetworkClient for TonicClient {
                                 "fetch_blocks failed mid-stream: {e:?}"
                             )));
                         }
-                        return Err(ConsensusError::NetworkError(format!(
+                        return Err(ConsensusError::NetworkRequest(format!(
                             "fetch_blocks failed mid-stream: {e:?}"
                         )));
                     } else {
@@ -229,7 +228,7 @@ impl NetworkClient for TonicClient {
         let response = client
             .fetch_commits(request)
             .await
-            .map_err(|e| ConsensusError::NetworkError(format!("fetch_commits failed: {e:?}")))?;
+            .map_err(|e| ConsensusError::NetworkRequest(format!("fetch_commits failed: {e:?}")))?;
         let response = response.into_inner();
         Ok((response.commits, response.certifier_blocks))
     }
@@ -266,7 +265,7 @@ impl ChannelPool {
 
         let authority = self.context.committee.authority(peer);
         let address = to_host_port_str(&authority.address).map_err(|e| {
-            ConsensusError::NetworkError(format!("Cannot convert address to host:port: {e:?}"))
+            ConsensusError::NetworkConfig(format!("Cannot convert address to host:port: {e:?}"))
         })?;
         let address = format!("https://{address}");
         let config = &self.context.parameters.tonic;
@@ -301,7 +300,7 @@ impl ChannelPool {
                 Err(e) => {
                     warn!("Timed out connecting to endpoint at {address}: {e:?}");
                     if tokio::time::Instant::now() >= deadline {
-                        return Err(ConsensusError::NetworkError(format!(
+                        return Err(ConsensusError::NetworkClientConnection(format!(
                             "Timed out connecting to endpoint at {address}: {e:?}"
                         )));
                     }
@@ -600,7 +599,7 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
                     let tls_stream = tls_acceptor.accept(tcp_stream).await.map_err(|e| {
                         let msg = format!("Error accepting TLS connection: {e:?}");
                         trace!(msg);
-                        ConsensusError::NetworkError(msg)
+                        ConsensusError::NetworkServerConnection(msg)
                     })?;
                     trace!("Accepted TLS connection");
 
@@ -612,17 +611,17 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
                                     certs.len()
                                 );
                                 trace!(msg);
-                                return Err(ConsensusError::NetworkError(msg));
+                                return Err(ConsensusError::NetworkServerConnection(msg));
                             }
                             trace!("Received {} certificates", certs.len());
                             sui_tls::public_key_from_certificate(&certs[0]).map_err(|e| {
                                 trace!("Failed to extract public key from certificate: {e:?}");
-                                ConsensusError::NetworkError(format!(
+                                ConsensusError::NetworkServerConnection(format!(
                                     "Failed to extract public key from certificate: {e:?}"
                                 ))
                             })?
                         } else {
-                            return Err(ConsensusError::NetworkError(
+                            return Err(ConsensusError::NetworkServerConnection(
                                 "No certificate found in TLS stream".to_string(),
                             ));
                         };
@@ -634,7 +633,7 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
                             "Failed to find the authority with public key {client_public_key:?}"
                         );
                         error!("{}", msg);
-                        return Err(ConsensusError::NetworkError(msg));
+                        return Err(ConsensusError::NetworkServerConnection(msg));
                     };
                     let svc = tower::ServiceBuilder::new()
                         // NOTE: the PeerInfo extension is copied to every request served.
@@ -646,7 +645,7 @@ impl<S: NetworkService> NetworkManager<S> for TonicManager {
                     http.serve_connection(tls_stream, svc).await.map_err(|e| {
                         let msg = format!("Server: error serving {peer_addr:?}: {e:?}");
                         trace!(msg);
-                        ConsensusError::NetworkError(msg)
+                        ConsensusError::NetworkServerConnection(msg)
                     })
                 });
             }
