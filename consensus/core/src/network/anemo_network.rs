@@ -351,7 +351,7 @@ impl<S: NetworkService> ConsensusRpc for AnemoServiceProxy<S> {
 /// 5. Install `AnemoService` to `AnemoManager` with `AnemoManager::install_service()`.
 pub(crate) struct AnemoManager {
     context: Arc<Context>,
-    network_keypair: NetworkKeyPair,
+    network_keypair: Option<NetworkKeyPair>,
     client: Arc<AnemoClient>,
     network: Arc<ArcSwapOption<anemo::Network>>,
     connection_monitor_handle: Option<ConnectionMonitorHandle>,
@@ -361,7 +361,7 @@ impl AnemoManager {
     pub(crate) fn new(context: Arc<Context>, network_keypair: NetworkKeyPair) -> Self {
         Self {
             context: context.clone(),
-            network_keypair,
+            network_keypair: Some(network_keypair),
             client: Arc::new(AnemoClient::new(context)),
             network: Arc::new(ArcSwapOption::default()),
             connection_monitor_handle: None,
@@ -491,7 +491,7 @@ impl<S: NetworkService> NetworkManager<S> for AnemoManager {
         let addr = own_address
             .to_anemo_address()
             .unwrap_or_else(|op| panic!("{op}: {own_address}"));
-        let private_key_bytes = self.network_keypair.clone().private_key_bytes();
+        let private_key_bytes = self.network_keypair.take().unwrap().private_key_bytes();
         let network = loop {
             let network_result = anemo::Network::bind(addr.clone())
                 .server_name("consensus")

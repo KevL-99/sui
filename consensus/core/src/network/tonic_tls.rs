@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use consensus_config::{AuthorityIndex, NetworkKeyPair};
 use fastcrypto::ed25519::Ed25519PublicKey;
-use tokio_rustls::rustls::{Certificate, ClientConfig, ServerConfig};
+use tokio_rustls::rustls::{ClientConfig, ServerConfig};
 
 use crate::context::Context;
 
@@ -80,44 +80,3 @@ impl sui_tls::Allower for AllowedPublicKeys {
 fn certificate_server_name(context: &Context) -> String {
     format!("consensus_epoch_{}", context.committee.epoch())
 }
-
-#[derive(Debug)]
-pub(crate) struct ConnInfo {
-    pub(crate) addr: std::net::SocketAddr,
-    pub(crate) certificates: Vec<Certificate>,
-}
-
-// // Verifies server cert for a given authority.
-// struct AuthorityCertVerifier {
-//     context: Arc<Context>,
-//     authority_index: AuthorityIndex,
-// }
-
-// impl AuthorityCertVerifier {
-//     fn new(context: Arc<Context>, authority_index: AuthorityIndex) -> Self {
-//         Self {
-//             context,
-//             authority_index,
-//         }
-//     }
-// }
-
-// impl ServerCertVerifier for AuthorityCertVerifier {
-//     fn verify_server_cert(
-//         &self,
-//         end_entity: &Certificate,
-//         intermediates: &[Certificate],
-//         _server_name: &rustls::ServerName,
-//         _scts: &mut dyn Iterator<Item = &[u8]>,
-//         _ocsp_response: &[u8],
-//         now: std::time::SystemTime,
-//     ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-//         let public_key = sui_tls::public_key_from_certificate(end_entity)?;
-
-//         Ok(rustls::client::ServerCertVerified::assertion())
-//     }
-
-//     fn request_scts(&self) -> bool {
-//         false
-//     }
-// }

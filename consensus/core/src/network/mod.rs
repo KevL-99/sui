@@ -47,6 +47,7 @@ pub(crate) mod metrics;
 #[cfg(test)]
 pub(crate) mod test_network;
 pub(crate) mod tonic_network;
+mod tonic_tls;
 
 /// A stream of serialized blocks returned over the network.
 pub(crate) type BlockStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
