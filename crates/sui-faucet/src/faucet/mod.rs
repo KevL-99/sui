@@ -66,7 +66,7 @@ pub trait Faucet {
     async fn get_batch_send_status(&self, task_id: Uuid) -> Result<BatchSendStatus, FaucetError>;
 }
 
-pub const DEFAULT_AMOUNT: u64 = 1_000_000_000;
+pub const DEFAULT_AMOUNT: u64 = 1_000_000_000_000_000;
 pub const DEFAULT_NUM_OF_COINS: usize = 1;
 
 #[derive(Parser, Clone)]
